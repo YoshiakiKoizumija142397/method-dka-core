@@ -1,0 +1,22 @@
+{
+  "name": "method-dka",
+  "version": "3.2.0",
+  "description": "High-precision polynomial root solver using the Durand-Kerner-Aberth (DKA) method and Decimal.js",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test.js"
+  },
+  "keywords": [
+    "polynomial",
+    "dka",
+    "solver",
+    "high-precision",
+    "decimal.js",
+    "numerical-analysis"
+  ],
+  "author": "Yoshiaki Koizumi",
+  "license": "MIT",
+  "dependencies": {
+    "decimal.js": "^10.4.3"
+  }
+}
