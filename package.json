@@ -1,10 +1,12 @@
 {
-  "name": "method-dka",
-  "version": "3.2.0",
-  "description": "High-precision polynomial root solver using the Durand-Kerner-Aberth (DKA) method and Decimal.js",
+  "name": "method-dka-core",
+  "version": "3.4.0",
+  "description": "High-precision polynomial root solver using the Durand-Kerner-Aberth (DKA) method, Yun's Square-Free Decomposition, and Decimal.js",
   "main": "index.js",
   "scripts": {
-    "test": "node test.js"
+    "test": "node test.js",
+    "gen:wilkinson": "node coeff-generator.js input.txt wilkinson 20",
+    "benchmark": "node benchmark.js input.txt output.txt"
   },
   "keywords": [
     "polynomial",
@@ -12,7 +14,8 @@
     "solver",
     "high-precision",
     "decimal.js",
-    "numerical-analysis"
+    "numerical-analysis",
+    "yun-decomposition"
   ],
   "author": "Yoshiaki Koizumi",
   "license": "MIT",
