@@ -1,11 +1,11 @@
 /**
- * Core Mathematical Engine for Durand-Kerner-Aberth Algorithm
+ * Core Mathematical Engine for Durand-Kerner-Aberth Algorithm (v3.5.0)
  * 
  * This document provides the complete, self-contained implementation of index.js for method-dka-core.
  * It operates in Node.js using decimal.js for arbitrary-precision complex arithmetic and Yun's square-free factor decomposition algorithm via BigInt arithmetic.
  * 
  * High-Precision Polynomial Root Finder using the Durand-Kerner-Aberth (DKA) Method
- * with Yun's Square-Free Decomposition preprocessing.
+ * with Yun's Square-Free Decomposition preprocessing and Live Progress Bar.
  * 
  * Requires: decimal.js (npm install decimal.js)
  */
@@ -442,7 +442,6 @@ function preprocessSquareFree(inputCoeffs, debug = false) {
         }
     }
 
-    // Fallback: Use full normalized polynomial safely without dropping roots
     if (debug) console.log("Using full normalized polynomial as safe fallback.");
     const decCoeffs = inputCoeffs.map(c => new Decimal(c));
     const normalized = normalizePoly(decCoeffs);
@@ -450,7 +449,7 @@ function preprocessSquareFree(inputCoeffs, debug = false) {
 }
 
 // ============================================================================
-// 5. SOLVER KERNEL (DKA METHOD WITH ABERTH CORRECTION)
+// 5. SOLVER KERNEL (DKA METHOD WITH ABERTH CORRECTION & LIVE PROGRESS)
 // ============================================================================
 
 function solveFactor(factorCoeffs, maxIter = 500, debug = false) {
@@ -475,7 +474,10 @@ function solveFactor(factorCoeffs, maxIter = 500, debug = false) {
     let converged = new Array(deg).fill(false);
     let iterations = 0;
     let finalCorrections = new Array(deg).fill(new Decimal(0));
-    const leadCoeff = coeffs[deg];
+    
+    // ライブ進捗表示用メッセージのプレフィックス
+    const factorLabel = `[Degree ${deg}]`;
+
     while (iterations < maxIter && converged.includes(false)) {
         iterations++;
         let maxChange = new Decimal(0);
@@ -514,10 +516,24 @@ function solveFactor(factorCoeffs, maxIter = 500, debug = false) {
                 converged[i] = true;
             }
         }
+
+        // リアルタイム進捗表示 (5回に1回、または最終反復時にコンソール行を上書き更新)
+        if (!debug && (iterations % 5 === 0 || iterations === maxIter || converged.every(Boolean))) {
+            const percent = ((iterations / maxIter) * 100).toFixed(1).padStart(5, ' ');
+            const progressMsg = `  -> ${factorLabel} Progress: ${percent}% (Iter: ${iterations}/${maxIter}, MaxChange: ${maxChange.toExponential(2)})`;
+            process.stdout.write(progressMsg + '\r');
+        }
+
         if (maxChange.lt(new Decimal('1e-250'))) {
             break;
         }
     }
+
+    // 進捗表示の行を綺麗に確定させるための改行
+    if (!debug) {
+        process.stdout.write(`  -> ${factorLabel} Completed in ${iterations} iterations.                    \n`);
+    }
+
     return roots.map((r, idx) => ({
         re: r.re,
         im: r.im,
@@ -533,16 +549,15 @@ function solveFactor(factorCoeffs, maxIter = 500, debug = false) {
 /**
  * Solves polynomial root finding using Durand-Kerner-Aberth method with square-free preprocessing.
  * 
- * @param {Array<string|number|Decimal>} coeffs - Coefficients ordered from highest to lowest degree [a_n, a_{n-1}, ..., a_0] (Descending)
- * @param {number} maxIter - Maximum iterations allowed for the DKA loop per factor
- * @param {boolean} debug - Toggles debug output logs
+ * @param {Array<string|number|Decimal>} coeffs Coefficients ordered from highest to lowest degree [a_n, a_{n-1}, ..., a_0] (Descending)
+ * @param {number} maxIter Maximum iterations allowed for the DKA loop per factor
+ * @param {boolean} debug Toggles debug output logs
  * @returns {Object} Solution payload containing extracted roots, residuals, and stats.
  */
-function solvePolynomial(coeffs, maxIter = 500, debug = false) {
+function solvePolynomial(coeffs, maxIter = 5000, debug = false) {
     if (!Array.isArray(coeffs) || coeffs.length < 2) {
         throw new Error("Input coefficients array must contain at least two entries.");
     }
-    // Convert external descending order to internal ascending order [a_0, a_1, ..., a_n]
     const origCoeffs = coeffs.map(c => new Decimal(c)).reverse();
 
     // Step 1: Preprocess to extract square-free factors
@@ -603,13 +618,9 @@ module.exports = {
 };
 
 // ============================================================================
-// 7. CLI EXECUTION & FILE I/O (v3.4.0 EXTENSION)
+// 7. CLI EXECUTION & FILE I/O (v3.5.0 EXTENSION)
 // ============================================================================
 
-/**
- * Fallback: Generate Wilkinson polynomial of degree 20 (W_20)
- * Evaluates: (x-1)(x-2)...(x-20) and returns coefficients from highest to lowest.
- */
 function buildWilkinson20Fallback() {
     let poly = [1n];
     for (let i = 1n; i <= 20n; i++) {
@@ -620,7 +631,6 @@ function buildWilkinson20Fallback() {
         }
         poly = nextPoly;
     }
-    // Convert to strings and reverse to get Highest -> Lowest degree
     return poly.reverse().map(c => c.toString());
 }
 
@@ -629,17 +639,14 @@ async function main() {
     const outputPath = path.join(__dirname, 'output.txt');
     let coefficients = [];
 
-    // 1. Check for input.txt (Highest priority)
     if (fs.existsSync(inputPath)) {
         const content = fs.readFileSync(inputPath, 'utf-8');
-        // Parse by whitespace or newlines, ignoring empty lines
         coefficients = content.split(/\s+/).map(line => line.trim()).filter(line => line.length > 0);
         if (coefficients.length < 2) {
             console.error("[Error] input.txt には最低2つの係数が必要です。");
             process.exit(1);
         }
     } else {
-        // 2. Fallback to built-in Wilkinson polynomial generator
         console.log("[Info] input.txt が見つかりません。デフォルトのウィルキンソン多項式(20次)テストを実行します...");
         coefficients = buildWilkinson20Fallback();
     }
@@ -647,13 +654,12 @@ async function main() {
     try {
         const startTime = process.hrtime();
 
-        // Execute DKA Solver
+        // Execute DKA Solver (Max iterations: 5000 with Live Progress)
         const results = solvePolynomial(coefficients, 5000, false);
 
         const diff = process.hrtime(startTime);
         const execTimeMs = (diff[0] * 1e3 + diff[1] * 1e-6).toFixed(3);
 
-        // Format Output (Aligned with standard testing format)
         let outputText = `Execution Time: ${execTimeMs} ms\n`;
         outputText += `Max Coefficient Residual: ${results.maxCoefficientResidual.toExponential(10)}\n\n`;
 
@@ -664,7 +670,6 @@ async function main() {
             outputText += `Root #${index + 1}: Re=${reStr}, Im=${root.im.toFixed(20)}, Res=${resStr}\n`;
         });
 
-        // Write to output.txt and print to Console
         fs.writeFileSync(outputPath, outputText, 'utf-8');
         console.log("--------------------------------------------------");
         console.log(outputText.trim());
@@ -675,7 +680,6 @@ async function main() {
     }
 }
 
-// Execute main() if script is run directly from the command line
 if (require.main === module) {
     main();
 }
