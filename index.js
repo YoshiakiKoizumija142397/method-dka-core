@@ -10,6 +10,8 @@
  * Requires: decimal.js (npm install decimal.js)
  */
 
+const fs = require('fs');
+const path = require('path');
 const Decimal = require('decimal.js');
 
 // Configurable Precision Hierarchy Standards
@@ -76,16 +78,16 @@ function evalPoly(coeffs, z) {
 function normalizedResidual(coeffs, z) {
     const pVal = c_abs(evalPoly(coeffs, z));
     const zAbs = c_abs(z);
-    
+
     let denom = new Decimal(0);
     let zPow = new Decimal(1);
-    
+
     for (let i = 0; i < coeffs.length; i++) {
         const coeffAbs = new Decimal(coeffs[i]).abs();
         denom = denom.plus(coeffAbs.times(zPow));
         zPow = zPow.times(zAbs);
     }
-    
+
     if (denom.isZero()) return new Decimal(0);
     return pVal.div(denom);
 }
@@ -439,7 +441,7 @@ function preprocessSquareFree(inputCoeffs, debug = false) {
             if (debug) console.log("Yun exact decomposition fallback triggered:", err.message);
         }
     }
-    
+
     // Fallback: Use full normalized polynomial safely without dropping roots
     if (debug) console.log("Using full normalized polynomial as safe fallback.");
     const decCoeffs = inputCoeffs.map(c => new Decimal(c));
@@ -599,3 +601,81 @@ module.exports = {
     preprocessSquareFree,
     solveFactor
 };
+
+// ============================================================================
+// 7. CLI EXECUTION & FILE I/O (v3.4.0 EXTENSION)
+// ============================================================================
+
+/**
+ * Fallback: Generate Wilkinson polynomial of degree 20 (W_20)
+ * Evaluates: (x-1)(x-2)...(x-20) and returns coefficients from highest to lowest.
+ */
+function buildWilkinson20Fallback() {
+    let poly = [1n];
+    for (let i = 1n; i <= 20n; i++) {
+        let nextPoly = new Array(poly.length + 1).fill(0n);
+        for (let j = 0; j < poly.length; j++) {
+            nextPoly[j + 1] += poly[j];        // * x
+            nextPoly[j] -= poly[j] * i;        // * (-i)
+        }
+        poly = nextPoly;
+    }
+    // Convert to strings and reverse to get Highest -> Lowest degree
+    return poly.reverse().map(c => c.toString());
+}
+
+async function main() {
+    const inputPath = path.join(__dirname, 'input.txt');
+    const outputPath = path.join(__dirname, 'output.txt');
+    let coefficients = [];
+
+    // 1. Check for input.txt (Highest priority)
+    if (fs.existsSync(inputPath)) {
+        const content = fs.readFileSync(inputPath, 'utf-8');
+        // Parse by whitespace or newlines, ignoring empty lines
+        coefficients = content.split(/\s+/).map(line => line.trim()).filter(line => line.length > 0);
+        if (coefficients.length < 2) {
+            console.error("[Error] input.txt には最低2つの係数が必要です。");
+            process.exit(1);
+        }
+    } else {
+        // 2. Fallback to built-in Wilkinson polynomial generator
+        console.log("[Info] input.txt が見つかりません。デフォルトのウィルキンソン多項式(20次)テストを実行します...");
+        coefficients = buildWilkinson20Fallback();
+    }
+
+    try {
+        const startTime = process.hrtime();
+
+        // Execute DKA Solver
+        const results = solvePolynomial(coefficients, 5000, false);
+
+        const diff = process.hrtime(startTime);
+        const execTimeMs = (diff[0] * 1e3 + diff[1] * 1e-6).toFixed(3);
+
+        // Format Output (Aligned with standard testing format)
+        let outputText = `Execution Time: ${execTimeMs} ms\n`;
+        outputText += `Max Coefficient Residual: ${results.maxCoefficientResidual.toExponential(10)}\n\n`;
+
+        results.roots.forEach((root, index) => {
+            const reStr = root.re.toFixed(20);
+            const imStr = root.im.isNegative() ? root.im.toFixed(20) : `+${root.im.toFixed(20)}`;
+            const resStr = root.residual.toExponential(6);
+            outputText += `Root #${index + 1}: Re=${reStr}, Im=${root.im.toFixed(20)}, Res=${resStr}\n`;
+        });
+
+        // Write to output.txt and print to Console
+        fs.writeFileSync(outputPath, outputText, 'utf-8');
+        console.log("--------------------------------------------------");
+        console.log(outputText.trim());
+        console.log("--------------------------------------------------");
+
+    } catch (err) {
+        console.error(`[Error] 実行時エラー: ${err.message}`);
+    }
+}
+
+// Execute main() if script is run directly from the command line
+if (require.main === module) {
+    main();
+}
