@@ -1,3 +1,4 @@
+```markdown
 # MethodDka Core (v3.4.0)
 
 High-precision polynomial root-finding library and CUI solver using the Durand-Kerner-Aberth (DKA) method, enhanced with Yun's Square-Free Decomposition, 320-digit preprocessing, and `decimal.js`.
@@ -15,7 +16,15 @@ High-precision polynomial root-finding library and CUI solver using the Durand-K
 
 ---
 
-### 2. 📋 システム仕様 (Technical Specifications)
+### 2. 📊 驚異的な検証実績 (Benchmark Evidence)
+
+本ソルバーの実用限界を証明するテストとして、**200次のウィルキンソン多項式を200桁精度で完全分離・算出**することに成功しています。この1,025行に及ぶ計算結果の完全な検証ログとベンチマークデータは、以下のGitHub Gistにて公開されています。
+
+👉 **[200次ウィルキンソン多項式の検証結果 (GitHub Gist)]( https://gist.github.com/YoshiakiKoizumija142397/649c89263a53df38e4f6cfbe8637883a )**
+
+---
+
+### 3. 📋 システム仕様 (Technical Specifications)
 
 | 項目 | 詳細仕様 (v3.4.0) |
 | --- | --- |
@@ -30,7 +39,7 @@ High-precision polynomial root-finding library and CUI solver using the Durand-K
 
 ---
 
-### 3. 入出力仕様 (Input & Output Specification)
+### 4. 入出力仕様 (Input & Output Specification)
 
 本モジュールは、ライブラリAPI呼び出しおよび CUI/CLI 実行の両方に対応します。CUI実行時（`node index.js`）は、外部ツールとの連携のため以下の優先順位で入出力を行います。
 
@@ -57,7 +66,7 @@ Root #2: Re=0.50003051757812500000, Im=0.00000000000000000000, Res=1.234567e-260
 
 ---
 
-### 4. 🚀 主な機能と特徴
+### 5. 🚀 主な機能と特徴
 
 1. **ユンの平方無因子分解**:
 整数係数は BigInt による厳密なGCDと多項式除算で、それ以外は 320桁精度で処理し、同じ重複度を持つ根の因子群 $Q_k(x)$ を分離します。各群の平方無因子性と次数の再構成を厳密に検証します。
@@ -70,7 +79,7 @@ Root #2: Re=0.50003051757812500000, Im=0.00000000000000000000, Res=1.234567e-260
 
 ---
 
-### 5. インストールと使用方法
+### 6. インストールと使用方法
 
 #### インストール
 
@@ -102,24 +111,11 @@ const coefficients = ["1", "-1", "-18", "52", "-40"];
 // solvePolynomial(係数配列, 最大反復回数, デバッグ出力フラグ)
 const result = solvePolynomial(coefficients, 5000, false);
 
-console.log(`因子グループ数: ${result.factorCount}`);
-console.log(`最大係数再構成残差: ${result.maxCoefficientResidual.toExponential(4)}`);
-
-result.roots.forEach((root, index) => {
-    const sign = root.im.isNegative() ? '' : '+';
-    console.log(`[Root ${index + 1}]`);
-    console.log(`  解: ${root.re.toFixed(200)} ${sign} ${root.im.toFixed(200)}i`);
-    console.log(`  重複度: ${root.multiplicity}`);
-    console.log(`  反復回数: ${root.iterations}`);
-    console.log(`  正規化残差: ${root.residual.toExponential(4)}`);
-    console.log(`  最終補正量: ${root.finalCorrection.toExponential(4)}\n`);
-});
-
 ```
 
 ---
 
-### 6. 変更履歴 (Changelog)
+### 7. 変更履歴 (Changelog)
 
 #### v3.4.0
 
@@ -136,7 +132,13 @@ result.roots.forEach((root, index) => {
 
 `method-dka-core` is a high-precision polynomial root-finding module and CUI benchmark engine operating in Node.js. It uses **260-digit internal arithmetic** powered by `Decimal.js`. **Note: Output length does not guarantee correct significant digits.**
 
-Version 3.4.0 introduces **Yun's square-free decomposition** for robust multiple-root separation, and a new **`input.txt` prioritized File I/O interface** for automated benchmarking tools. It uses exact BigInt arithmetic for integer coefficients and 320-digit preprocessing ($\epsilon = 10^{-220}$) otherwise, separating roots with different multiplicities into square-free factors $Q_k(x)$ for individual DKA execution with rigorous safety guards and fallbacks.
+Version 3.4.0 introduces **Yun's square-free decomposition** for robust multiple-root separation, and a new **`input.txt` prioritized File I/O interface** for automated benchmarking tools.
+
+### 📊 Benchmark Evidence
+
+As definitive proof of the solver's practical limits, the engine has successfully resolved a **200th-degree Wilkinson polynomial to 200-digit precision**. The complete 1,025-line verification logs and benchmark dataset are publicly available on GitHub Gist:
+
+👉 **[200th-degree Wilkinson Benchmark on GitHub Gist](https://www.google.com/search?q=%5B%E3%81%93%E3%81%93%E3%81%ABGist%E3%81%AEURL%E3%82%92%E8%B2%BC%E3%82%8A%E4%BB%98%E3%81%91%E3%81%A6%E3%81%8F%E3%81%A0%E3%81%95%E3%81%84%5D)**
 
 ### Technical Specifications
 
