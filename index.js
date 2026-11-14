@@ -1,11 +1,9 @@
 /**
- * Core Mathematical Engine for Durand-Kerner-Aberth Algorithm (v3.5.0)
+ * Core Mathematical Engine for Durand-Kerner-Aberth Algorithm (v3.7.7)
  * 
- * This document provides the complete, self-contained implementation of index.js for method-dka-core.
- * It operates in Node.js using decimal.js for arbitrary-precision complex arithmetic and Yun's square-free factor decomposition algorithm via BigInt arithmetic.
- * 
- * High-Precision Polynomial Root Finder using the Durand-Kerner-Aberth (DKA) Method
- * with Yun's Square-Free Decomposition preprocessing and Live Progress Bar.
+ * High-Precision General Polynomial Root Finder using the DKA Method
+ * with Yun's Square-Free Decomposition preprocessing, 400-digit internal precision,
+ * 180-digit convergence criteria, 180-digit output formatting, and Individual Root Iteration Tracking.
  * 
  * Requires: decimal.js (npm install decimal.js)
  */
@@ -14,60 +12,86 @@ const fs = require('fs');
 const path = require('path');
 const Decimal = require('decimal.js');
 
-// Configurable Precision Hierarchy Standards
-const PRECISION_PREPROCESS = 320;
-const PRECISION_DKA = 260;
+// Configurable Precision Hierarchy Standards (v3.7.7)
+const PRECISION_PREPROCESS = 420;
+const PRECISION_DKA = 400;
+const MAX_SAFETY_INTERVENTIONS = 500; // セイフティロック許容上限回数
 
 /**
- * Configure global Decimal settings to default precision
+ * Configure global Decimal settings to 400-digit precision and expanded exponent bounds
  */
 Decimal.set({
     precision: PRECISION_DKA,
+    maxE: 1e9,
+    minE: -1e9,
     rounding: Decimal.ROUND_HALF_UP
 });
 
 // ============================================================================
-// 1. COMPLEX ARITHMETIC HELPER FUNCTIONS
+// 1. COMPLEX ARITHMETIC HELPER FUNCTIONS (Type-Safe Decimal Wrapping)
 // ============================================================================
 
+function toDec(val) {
+    return val instanceof Decimal ? val : new Decimal(val);
+}
+
+function c_wrap(re, im) {
+    return {
+        re: toDec(re),
+        im: toDec(im)
+    };
+}
+
 function c_add(a, b) {
-    return { re: a.re.plus(b.re), im: a.im.plus(b.im) };
+    return {
+        re: toDec(a.re).plus(toDec(b.re)),
+        im: toDec(a.im).plus(toDec(b.im))
+    };
 }
 
 function c_sub(a, b) {
-    return { re: a.re.minus(b.re), im: a.im.minus(b.im) };
+    return {
+        re: toDec(a.re).minus(toDec(b.re)),
+        im: toDec(a.im).minus(toDec(b.im))
+    };
 }
 
 function c_mul(a, b) {
+    const ar = toDec(a.re), ai = toDec(a.im);
+    const br = toDec(b.re), bi = toDec(b.im);
     return {
-        re: a.re.times(b.re).minus(a.im.times(b.im)),
-        im: a.re.times(b.im).plus(a.im.times(b.re))
+        re: ar.times(br).minus(ai.times(bi)),
+        im: ar.times(bi).plus(ai.times(br))
     };
 }
 
 function c_div(a, b) {
-    const denom = b.re.times(b.re).plus(b.im.times(b.im));
+    const ar = toDec(a.re), ai = toDec(a.im);
+    const br = toDec(b.re), bi = toDec(b.im);
+    const denom = br.times(br).plus(bi.times(bi));
     if (denom.isZero()) {
         throw new Error("Complex division by zero.");
     }
     return {
-        re: a.re.times(b.re).plus(a.im.times(b.im)).div(denom),
-        im: a.im.times(b.re).minus(a.re.times(b.im)).div(denom)
+        re: ar.times(br).plus(ai.times(bi)).div(denom),
+        im: ai.times(br).minus(ar.times(bi)).div(denom)
     };
 }
 
 function c_abs(a) {
-    return a.re.times(a.re).plus(a.im.times(a.im)).sqrt();
+    const ar = toDec(a.re), ai = toDec(a.im);
+    return ar.times(ar).plus(ai.times(ai)).sqrt();
 }
 
 /**
  * Evaluates polynomial P(z) = sum_{k=0}^n a_k * z^k using Horner's Method
  */
 function evalPoly(coeffs, z) {
-    let result = { re: new Decimal(0), im: new Decimal(0) };
+    let result = c_wrap(0, 0);
+    const zComp = c_wrap(z.re, z.im);
     for (let i = coeffs.length - 1; i >= 0; i--) {
-        const coeffComp = { re: new Decimal(coeffs[i]), im: new Decimal(0) };
-        result = c_add(c_mul(result, z), coeffComp);
+        const coeffComp = c_wrap(coeffs[i], 0);
+        result = c_add(c_mul(result, zComp), coeffComp);
     }
     return result;
 }
@@ -100,9 +124,9 @@ function coefficientReconstructionResidual(rootsWithMult, origCoeffs) {
     if (deg <= 0) return new Decimal(0);
     let poly = [{ re: new Decimal(1), im: new Decimal(0) }];
     for (const r of rootsWithMult) {
-        const negR = { re: r.re.negated(), im: r.im.negated() };
+        const negR = c_wrap(toDec(r.re).negated(), toDec(r.im).negated());
         for (let m = 0; m < r.multiplicity; m++) {
-            const nextPoly = new Array(poly.length + 1).fill(null).map(() => ({ re: new Decimal(0), im: new Decimal(0) }));
+            const nextPoly = new Array(poly.length + 1).fill(null).map(() => c_wrap(0, 0));
             for (let i = 0; i < poly.length; i++) {
                 nextPoly[i + 1] = c_add(nextPoly[i + 1], poly[i]);
                 nextPoly[i] = c_add(nextPoly[i], c_mul(poly[i], negR));
@@ -113,7 +137,7 @@ function coefficientReconstructionResidual(rootsWithMult, origCoeffs) {
     const leadOrig = new Decimal(origCoeffs[deg]);
     let maxRelDiff = new Decimal(0);
     for (let i = 0; i <= deg; i++) {
-        const scaledRe = poly[i].re.times(leadOrig);
+        const scaledRe = toDec(poly[i].re).times(leadOrig);
         const origC = new Decimal(origCoeffs[i]);
         const diff = scaledRe.minus(origC).abs();
         const denom = Decimal.max(origC.abs(), new Decimal(1));
@@ -150,7 +174,7 @@ function estimateRootScale(coeffs) {
 
 function trimLeadingZeros(poly) {
     let end = poly.length;
-    while (end > 1 && poly[end - 1].isZero()) {
+    while (end > 1 && toDec(poly[end - 1]).isZero()) {
         end--;
     }
     return poly.slice(0, end);
@@ -167,7 +191,7 @@ function derivativePoly(poly) {
     if (deg <= 0) return [new Decimal(0)];
     const deriv = [];
     for (let i = 1; i <= deg; i++) {
-        deriv.push(trimmed[i].times(i));
+        deriv.push(toDec(trimmed[i]).times(i));
     }
     return trimLeadingZeros(deriv);
 }
@@ -177,7 +201,7 @@ function polyDivide(num, den) {
     const D = trimLeadingZeros(den);
     const degN = N.length - 1;
     const degD = D.length - 1;
-    if (degD < 0 || (degD === 0 && D[0].isZero())) {
+    if (degD < 0 || (degD === 0 && toDec(D[0]).isZero())) {
         throw new Error("Polynomial division by zero polynomial.");
     }
     if (degN < degD) {
@@ -188,15 +212,15 @@ function polyDivide(num, den) {
     }
     const qDeg = degN - degD;
     const quotient = new Array(qDeg + 1).fill(null).map(() => new Decimal(0));
-    const leadD = D[degD];
+    const leadD = toDec(D[degD]);
     let rem = N.map(c => new Decimal(c));
     for (let i = qDeg; i >= 0; i--) {
         const curDeg = i + degD;
         if (rem.length - 1 >= curDeg) {
-            const coeff = rem[curDeg].div(leadD);
+            const coeff = toDec(rem[curDeg]).div(leadD);
             quotient[i] = coeff;
             for (let j = 0; j <= degD; j++) {
-                rem[i + j] = rem[i + j].minus(coeff.times(D[j]));
+                rem[i + j] = toDec(rem[i + j]).minus(coeff.times(toDec(D[j])));
             }
         }
     }
@@ -209,29 +233,9 @@ function polyDivide(num, den) {
 function normalizePoly(poly) {
     const trimmed = trimLeadingZeros(poly);
     const deg = trimmed.length - 1;
-    if (deg < 0 || trimmed[deg].isZero()) return trimmed;
-    const lead = trimmed[deg];
-    return trimmed.map(c => c.div(lead));
-}
-
-function polyGCD(poly1, poly2, eps = new Decimal('1e-50')) {
-    let a = normalizePoly(poly1);
-    let b = normalizePoly(poly2);
-    while (getPolyDegree(b) >= 0 && !b.every(c => c.abs().lt(eps))) {
-        const divResult = polyDivide(a, b);
-        a = b;
-        b = normalizePoly(divResult.remainder);
-    }
-    return normalizePoly(a);
-}
-
-function divideExactly(num, den) {
-    const { quotient, remainder } = polyDivide(num, den);
-    const remDeg = getPolyDegree(remainder);
-    if (remDeg >= 0 && !remainder.every(c => c.abs().lt(new Decimal('1e-40')))) {
-        throw new Error("Inexact polynomial division detected.");
-    }
-    return quotient;
+    if (deg < 0 || toDec(trimmed[deg]).isZero()) return trimmed;
+    const lead = toDec(trimmed[deg]);
+    return trimmed.map(c => toDec(c).div(lead));
 }
 
 // ============================================================================
@@ -404,11 +408,11 @@ function yunDecomposeIntegerPoly(poly) {
 }
 
 // ============================================================================
-// 4. PREPROCESSING & FALLBACK PIPELINE
+// 4. PREPROCESSING & FALLBACK PIPELINE (v3.7.7)
 // ============================================================================
 
 function preprocessSquareFree(inputCoeffs, debug = false) {
-    Decimal.set({ precision: PRECISION_PREPROCESS });
+    Decimal.set({ precision: PRECISION_PREPROCESS, maxE: 1e9, minE: -1e9 });
     let allInteger = true;
     const bigintCoeffs = [];
     for (const c of inputCoeffs) {
@@ -449,129 +453,162 @@ function preprocessSquareFree(inputCoeffs, debug = false) {
 }
 
 // ============================================================================
-// 5. SOLVER KERNEL (DKA METHOD WITH ABERTH CORRECTION & LIVE PROGRESS)
+// 5. SOLVER KERNEL (DKA METHOD WITH INDIVIDUAL ROOT ITERATION TRACKING)
 // ============================================================================
 
-function solveFactor(factorCoeffs, maxIter = 500, debug = false) {
-    Decimal.set({ precision: PRECISION_DKA });
+function solveFactor(factorCoeffs, maxIter = 5000, debug = false) {
+    Decimal.set({ precision: PRECISION_DKA, maxE: 1e9, minE: -1e9 });
     const coeffs = factorCoeffs.map(c => new Decimal(c));
     const deg = coeffs.length - 1;
-    if (deg <= 0) return [];
+    if (deg <= 0) return { rawRoots: [], safetyTriggers: 0 };
     if (deg === 1) {
         const root = coeffs[0].negated().div(coeffs[1]);
-        return [{ re: root, im: new Decimal(0), iterations: 0, finalCorrection: new Decimal(0) }];
+        return {
+            rawRoots: [{ re: root, im: new Decimal(0), iterations: 1, finalCorrection: new Decimal(0) }],
+            safetyTriggers: 0
+        };
     }
     const R = estimateRootScale(coeffs);
     let roots = [];
     for (let i = 0; i < deg; i++) {
         const angle = new Decimal(2).times(Decimal.acos(-1)).times(i).plus(new Decimal('0.5')).div(deg);
         const radius = R.times(new Decimal('0.9').plus(new Decimal('0.2').times(i).div(deg)));
-        roots.push({
-            re: radius.times(Decimal.cos(angle)),
-            im: radius.times(Decimal.sin(angle))
-        });
+        roots.push(c_wrap(
+            radius.times(Decimal.cos(angle)),
+            radius.times(Decimal.sin(angle))
+        ));
     }
     let converged = new Array(deg).fill(false);
+    let rootConvergedIters = new Array(deg).fill(0); // 各根ごとの個別収束回数
     let iterations = 0;
     let finalCorrections = new Array(deg).fill(new Decimal(0));
+    let safetyLockTriggerCount = 0;
     
-    // ライブ進捗表示用メッセージのプレフィックス
     const factorLabel = `[Degree ${deg}]`;
+    const tolerance = new Decimal('1e-180');
 
     while (iterations < maxIter && converged.includes(false)) {
         iterations++;
         let maxChange = new Decimal(0);
+        let newRoots = roots.map(r => c_wrap(r.re, r.im));
+
         for (let i = 0; i < deg; i++) {
             if (converged[i]) continue;
-            const z = roots[i];
+            let z_re = toDec(roots[i].re);
+            let z_im = toDec(roots[i].im);
+
+            if (!z_re.isFinite() || !z_im.isFinite()) {
+                safetyLockTriggerCount++;
+                if (safetyLockTriggerCount > MAX_SAFETY_INTERVENTIONS) {
+                    throw new Error(`[Fatal Error] Safety lock limit exceeded (${MAX_SAFETY_INTERVENTIONS}). Calculation aborted.`);
+                }
+                z_re = toDec(R);
+                z_im = new Decimal(0);
+            }
+
+            const z = c_wrap(z_re, z_im);
             const pVal = evalPoly(coeffs, z);
 
-            let pDeriv = { re: new Decimal(0), im: new Decimal(0) };
+            let pDeriv = c_wrap(0, 0);
             for (let k = coeffs.length - 1; k >= 1; k--) {
-                const coeffComp = { re: coeffs[k].times(k), im: new Decimal(0) };
+                const coeffComp = c_wrap(coeffs[k].times(k), 0);
                 pDeriv = c_add(c_mul(pDeriv, z), coeffComp);
             }
             if (c_abs(pVal).isZero()) {
                 converged[i] = true;
+                rootConvergedIters[i] = iterations;
                 continue;
             }
             const NewtonRatio = c_div(pVal, pDeriv);
-            let sumAberth = { re: new Decimal(0), im: new Decimal(0) };
+            let sumAberth = c_wrap(0, 0);
             for (let j = 0; j < deg; j++) {
                 if (i !== j) {
                     const diff = c_sub(z, roots[j]);
-                    const invDiff = c_div({ re: new Decimal(1), im: new Decimal(0) }, diff);
+                    const invDiff = c_div(c_wrap(1, 0), diff);
                     sumAberth = c_add(sumAberth, invDiff);
                 }
             }
-            const denomAberth = c_sub({ re: new Decimal(1), im: new Decimal(0) }, c_mul(NewtonRatio, sumAberth));
-            const correction = c_div(NewtonRatio, denomAberth);
-            roots[i] = c_sub(z, correction);
+            const denomAberth = c_sub(c_wrap(1, 0), c_mul(NewtonRatio, sumAberth));
+            let correction = c_div(NewtonRatio, denomAberth);
+
+            if (!toDec(correction.re).isFinite() || !toDec(correction.im).isFinite()) {
+                safetyLockTriggerCount++;
+                if (safetyLockTriggerCount > MAX_SAFETY_INTERVENTIONS) {
+                    throw new Error(`[Fatal Error] Safety lock limit exceeded (${MAX_SAFETY_INTERVENTIONS}). Calculation aborted.`);
+                }
+                correction = c_wrap(0, 0);
+            }
+
+            newRoots[i] = c_sub(z, correction);
             const corrAbs = c_abs(correction);
             finalCorrections[i] = corrAbs;
             if (corrAbs.gt(maxChange)) {
                 maxChange = corrAbs;
             }
-            if (corrAbs.lt(new Decimal('1e-250'))) {
+            if (corrAbs.lt(tolerance)) {
                 converged[i] = true;
+                rootConvergedIters[i] = iterations;
             }
         }
 
-        // リアルタイム進捗表示 (5回に1回、または最終反復時にコンソール行を上書き更新)
-        if (!debug && (iterations % 5 === 0 || iterations === maxIter || converged.every(Boolean))) {
+        // まだ収束していない根についても、ループが終了した時点で現在のイテレーション数を仮設定
+        for (let i = 0; i < deg; i++) {
+            if (!converged[i]) {
+                rootConvergedIters[i] = iterations;
+            }
+        }
+
+        roots = newRoots;
+
+        if (!debug && (iterations % 10 === 0 || iterations === maxIter || converged.every(Boolean))) {
             const percent = ((iterations / maxIter) * 100).toFixed(1).padStart(5, ' ');
             const progressMsg = `  -> ${factorLabel} Progress: ${percent}% (Iter: ${iterations}/${maxIter}, MaxChange: ${maxChange.toExponential(2)})`;
             process.stdout.write(progressMsg + '\r');
         }
 
-        if (maxChange.lt(new Decimal('1e-250'))) {
+        if (maxChange.lt(tolerance)) {
             break;
         }
     }
 
-    // 進捗表示の行を綺麗に確定させるための改行
     if (!debug) {
-        process.stdout.write(`  -> ${factorLabel} Completed in ${iterations} iterations.                    \n`);
+        process.stdout.write(`  -> ${factorLabel} Completed in ${iterations} iterations. (Safety Locks Triggered: ${safetyLockTriggerCount})\n`);
     }
 
-    return roots.map((r, idx) => ({
-        re: r.re,
-        im: r.im,
-        iterations: iterations,
-        finalCorrection: finalCorrections[idx]
-    }));
+    return {
+        rawRoots: roots.map((r, idx) => ({
+            re: toDec(r.re),
+            im: toDec(r.im),
+            iterations: rootConvergedIters[idx], // 各根が収束した個別のイテレーション数
+            finalCorrection: finalCorrections[idx]
+        })),
+        safetyTriggers: safetyLockTriggerCount
+    };
 }
 
 // ============================================================================
 // 6. MAIN EXPORTED FUNCTION
 // ============================================================================
 
-/**
- * Solves polynomial root finding using Durand-Kerner-Aberth method with square-free preprocessing.
- * 
- * @param {Array<string|number|Decimal>} coeffs Coefficients ordered from highest to lowest degree [a_n, a_{n-1}, ..., a_0] (Descending)
- * @param {number} maxIter Maximum iterations allowed for the DKA loop per factor
- * @param {boolean} debug Toggles debug output logs
- * @returns {Object} Solution payload containing extracted roots, residuals, and stats.
- */
 function solvePolynomial(coeffs, maxIter = 5000, debug = false) {
     if (!Array.isArray(coeffs) || coeffs.length < 2) {
         throw new Error("Input coefficients array must contain at least two entries.");
     }
     const origCoeffs = coeffs.map(c => new Decimal(c)).reverse();
 
-    // Step 1: Preprocess to extract square-free factors
     const factors = preprocessSquareFree(origCoeffs, debug);
 
-    // Step 2: Solve each factor
     const solvedRoots = [];
+    let totalSafetyTriggers = 0;
+
     for (const f of factors) {
-        const rawRoots = solveFactor(f.factor, maxIter, debug);
-        for (const r of rawRoots) {
+        const factorResult = solveFactor(f.factor, maxIter, debug);
+        totalSafetyTriggers += factorResult.safetyTriggers;
+        for (const r of factorResult.rawRoots) {
             const residual = normalizedResidual(origCoeffs, r);
             solvedRoots.push({
-                re: r.re,
-                im: r.im,
+                re: toDec(r.re),
+                im: toDec(r.im),
                 residual: residual,
                 iterations: r.iterations,
                 multiplicity: f.multiplicity,
@@ -580,13 +617,13 @@ function solvePolynomial(coeffs, maxIter = 5000, debug = false) {
         }
     }
 
-    // Step 3: Global Residual Evaluation
     const maxCoeffResidual = coefficientReconstructionResidual(solvedRoots, origCoeffs);
 
     return {
         roots: solvedRoots,
         maxCoefficientResidual: maxCoeffResidual,
-        factorCount: factors.length
+        factorCount: factors.length,
+        safetyTriggers: totalSafetyTriggers
     };
 }
 
@@ -606,33 +643,13 @@ module.exports = {
     derivativePoly,
     polyDivide,
     normalizePoly,
-    polyGCD,
-    divideExactly,
-    primitiveIntegerPoly,
-    integerPolyGcd,
-    divideIntegerPolyExactly,
-    derivativeIntegerPoly,
-    yunDecomposeIntegerPoly,
     preprocessSquareFree,
     solveFactor
 };
 
 // ============================================================================
-// 7. CLI EXECUTION & FILE I/O (v3.5.0 EXTENSION)
+// 7. CLI EXECUTION & FILE I/O (v3.7.7: Individual Iterations in Report)
 // ============================================================================
-
-function buildWilkinson20Fallback() {
-    let poly = [1n];
-    for (let i = 1n; i <= 20n; i++) {
-        let nextPoly = new Array(poly.length + 1).fill(0n);
-        for (let j = 0; j < poly.length; j++) {
-            nextPoly[j + 1] += poly[j];        // * x
-            nextPoly[j] -= poly[j] * i;        // * (-i)
-        }
-        poly = nextPoly;
-    }
-    return poly.reverse().map(c => c.toString());
-}
 
 async function main() {
     const inputPath = path.join(__dirname, 'input.txt');
@@ -641,34 +658,49 @@ async function main() {
 
     if (fs.existsSync(inputPath)) {
         const content = fs.readFileSync(inputPath, 'utf-8');
-        coefficients = content.split(/\s+/).map(line => line.trim()).filter(line => line.length > 0);
+        coefficients = content.split(/[\s,]+/).map(line => line.trim()).filter(line => line.length > 0);
         if (coefficients.length < 2) {
             console.error("[Error] input.txt には最低2つの係数が必要です。");
             process.exit(1);
         }
     } else {
-        console.log("[Info] input.txt が見つかりません。デフォルトのウィルキンソン多項式(20次)テストを実行します...");
-        coefficients = buildWilkinson20Fallback();
+        console.error("[Error] input.txt が見つかりません。入力係数ファイルを配置してください。");
+        process.exit(1);
     }
 
     try {
         const startTime = process.hrtime();
+        const timestamp = new Date().toISOString();
 
-        // Execute DKA Solver (Max iterations: 5000 with Live Progress)
         const results = solvePolynomial(coefficients, 5000, false);
 
         const diff = process.hrtime(startTime);
         const execTimeMs = (diff[0] * 1e3 + diff[1] * 1e-6).toFixed(3);
 
-        let outputText = `Execution Time: ${execTimeMs} ms\n`;
-        outputText += `Max Coefficient Residual: ${results.maxCoefficientResidual.toExponential(10)}\n\n`;
+        let outputText = "==================================================\n";
+        outputText += " METHOD-DKA-CORE EXECUTION AUDIT REPORT (v3.7.7)\n";
+        outputText += "==================================================\n";
+        outputText += `Timestamp: ${timestamp}\n`;
+        outputText += `Internal Precision: ${PRECISION_DKA} digits (Preprocess: ${PRECISION_PREPROCESS} digits)\n`;
+        outputText += `Execution Time: ${execTimeMs} ms\n`;
+        outputText += `Safety Lock Interventions Triggered: ${results.safetyTriggers} times (Limit: ${MAX_SAFETY_INTERVENTIONS})\n`;
+        outputText += `Max Coefficient Residual: ${results.maxCoefficientResidual.toExponential(10)}\n`;
+        outputText += "--------------------------------------------------\n";
+        outputText += "Input Coefficients:\n";
+        outputText += coefficients.join(", ") + "\n";
+        outputText += "--------------------------------------------------\n\n";
 
         results.roots.forEach((root, index) => {
-            const reStr = root.re.toFixed(20);
-            const imStr = root.im.isNegative() ? root.im.toFixed(20) : `+${root.im.toFixed(20)}`;
+            const reStr = toDec(root.re).toFixed(180);
+            const imVal = toDec(root.im);
+            const imSign = imVal.isNegative() ? "" : "+";
+            const imStr = imSign + imVal.toFixed(180);
             const resStr = root.residual.toExponential(6);
-            outputText += `Root #${index + 1}: Re=${reStr}, Im=${root.im.toFixed(20)}, Res=${resStr}\n`;
+            const iterVal = root.iterations;
+            outputText += `Root #${index + 1}: Re=${reStr}, Im=${imStr}, Res=${resStr}, Iter=${iterVal}\n`;
         });
+
+        outputText += "\n==================================================\n";
 
         fs.writeFileSync(outputPath, outputText, 'utf-8');
         console.log("--------------------------------------------------");

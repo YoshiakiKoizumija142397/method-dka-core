@@ -42,7 +42,8 @@
               "RelativeToolTip": "package.json",
               "ViewState": "AgIAAAkAAAAAAAAAAAAAABYAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
-              "WhenOpened": "2026-10-17T09:59:40.074Z"
+              "WhenOpened": "2026-10-17T09:59:40.074Z",
+              "OwnerCaption": "%3"
             },
             {
               "$type": "Document",
@@ -54,7 +55,8 @@
               "RelativeToolTip": "LICENSE",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-10-17T09:59:38.154Z"
+              "WhenOpened": "2026-10-17T09:59:38.154Z",
+              "OwnerCaption": "%3"
             },
             {
               "$type": "Document",
@@ -67,7 +69,8 @@
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAKgCAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001646|",
               "WhenOpened": "2026-10-17T09:59:32.744Z",
-              "EditorCaption": ""
+              "EditorCaption": "",
+              "OwnerCaption": "%3"
             },
             {
               "$type": "Document",
@@ -80,7 +83,7 @@
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAkAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
               "WhenOpened": "2026-10-17T09:59:27.241Z",
-              "EditorCaption": ""
+              "OwnerCaption": "%3"
             }
           ]
         }
